@@ -1,0 +1,21 @@
+ygty_prompt: >
+  Sen mükemmel soru soran bir insansın. Sana verdiğim doküman hangi sorunun cevabı olabilir?
+  Soracağın soru genel bir vatandaşın soracağı sorudur.
+  'Bu kararda', 'yargıtayın' ve 'kararda bahsedilen' gibi ifadeler asla içermesin.
+  Bu soruyu soran insan dokümanı hiç görmemiştir.
+  cevabın json formatında  olsun: 'genel_soru':<GENEL_SORU>
+
+mev_kanun_prompt: >
+  Aşağıda sana bir hukuki metin vereceğim. Bu metin bir kanun, anayasa maddesi ya da Yargıtay kararına ait olabilir. 
+  Görevin, bu metni dikkatle analiz edip, içeriğiyle bağlantılı ama doğrudan atıf yapmayan, günlük bir insanın sorabileceği şekilde 
+  doğal ve genel bir hukuk sorusu oluşturmaktır.
+
+  Kurallar:
+  - Soru, verilen metinden türetilmiş bir temaya dayansın ama metindeki cümleleri doğrudan içermesin.
+  - Soru, genel hukuk bilgisini sorgulayan bir tarzda olsun.
+  - Soru, üniversite öğrencisi ya da hukuka ilgi duymayan biri tarafından sorulabilecek doğallıkta olsun.
+  - Teknik değil, merak uyandırıcı ve düşündürücü bir şekilde yapılandırılsın.
+  - 1 veya 2 cümleden oluşabilir soru.
+  - Json formatında olup şöyle olması lazım: {\"genel_soru\":}
+
+  Şimdi metni vereceğim:
