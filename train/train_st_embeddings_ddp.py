@@ -86,28 +86,25 @@ class PairDataset(Dataset):
                 item["p_neg_input"] = self.tok(n, truncation=True, max_length=self.max_p, padding=False, return_tensors=None)
         return item
 
-def collate_fn(batch, pad):
-    keys = ["input_ids", "attention_mask", "token_type_ids"]
-    def pad_pack(items):
-        # items is a list of tokenized dicts (may lack token_type_ids)
-        if len(items) == 0: return None
-        out = {}
-        for k in keys:
-            tensors = [torch.tensor(x[k]) for x in items if k in x]
-            if len(tensors) == 0: continue
-            out[k] = pad(tensors, padding=True, return_tensors="pt")["input_ids" if k=="input_ids" else k]
-        return out
+def collate_fn(batch, tokenizer):
+    # batch: list of {"q_input": dict, "p_pos_input": dict, optional "p_neg_input": dict}
+    q_dicts = [b["q_input"] for b in batch]
+    p_pos_dicts = [b["p_pos_input"] for b in batch]
+    p_neg_dicts = [b["p_neg_input"] for b in batch if "p_neg_input" in b]
 
-    q_items = [b["q_input"] for b in batch]
-    p_pos_items = [b["p_pos_input"] for b in batch]
-    p_neg_items = [b.get("p_neg_input") for b in batch if "p_neg_input" in b]
+    q = tokenizer.pad(q_dicts, padding=True, return_tensors="pt")
+    p_pos = tokenizer.pad(p_pos_dicts, padding=True, return_tensors="pt")
+    p_neg = tokenizer.pad(p_neg_dicts, padding=True, return_tensors="pt") if len(p_neg_dicts) > 0 else None
 
-    q = pad(q_items, padding=True, return_tensors="pt")
-    p_pos = pad(p_pos_items, padding=True, return_tensors="pt")
-    p_neg = pad(p_neg_items, padding=True, return_tensors="pt") if len(p_neg_items) > 0 else None
+    # Some models don’t use token_type_ids; make sure key exists (or strip later)
+    if "token_type_ids" not in q:      q["token_type_ids"] = None
+    if "token_type_ids" not in p_pos:  p_pos["token_type_ids"] = None
+    if p_neg is not None and "token_type_ids" not in p_neg:
+        p_neg["token_type_ids"] = None
 
     return {"q": q, "p_pos": p_pos, "p_neg": p_neg}
 
+"""
 def info_nce_loss(accelerator, q_emb, p_pos_emb, temperature=0.05):
     # Gather embeddings from all processes for cross-device negatives
     q_all = accelerator.gather(q_emb)
@@ -118,12 +115,40 @@ def info_nce_loss(accelerator, q_emb, p_pos_emb, temperature=0.05):
     labels = torch.arange(global_batch, device=sim.device)
     loss = F.cross_entropy(sim, labels)
     return loss
+"""
+
+def info_nce_loss(accelerator, q_local, p_local, temperature=0.05):
+    with torch.no_grad():
+        p_bank = accelerator.gather(p_local.detach()).clone()  # fully detached + cloned
+    world_bs = p_bank.size(0) // accelerator.num_processes
+    assert p_local.size(0) == world_bs, "Set drop_last=True so per-rank batch size matches."
+
+    # Local queries vs all passages (others detached)
+    logits  = (q_local @ p_bank.T) / temperature
+    r       = accelerator.process_index
+    targets = torch.arange(world_bs, device=logits.device) + r * world_bs
+    return F.cross_entropy(logits, targets)
+
 
 def triplet_loss(q, pos, neg, margin=0.25):
     # Cosine distance; embeddings already normalized
     d_pos = 1 - (q * pos).sum(dim=1)
     d_neg = 1 - (q * neg).sum(dim=1)
     return F.relu(margin + d_pos - d_neg).mean()
+
+
+def forward_model(model, batch_inputs):
+    # Strip Nones and CLONE tensors to avoid in-place mutations on saved LongTensors
+    inputs = {}
+    for k, v in batch_inputs.items():
+        if v is None:
+            continue
+        if isinstance(v, torch.Tensor):
+            inputs[k] = v.clone()
+        else:
+            inputs[k] = v
+    return model(**inputs)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -165,7 +190,7 @@ def main():
 
     include_triplets = args.use_triplet_if_negs and "hard_negs" in ds.column_names
     dataset = PairDataset(rows, tokenizer, args.max_query_len, args.max_passage_len, include_triplets)
-    dl = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda b: collate_fn(b, tokenizer))
+    dl = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True, collate_fn=lambda b: collate_fn(b, tokenizer))
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     num_training_steps = math.ceil(len(dl) * args.epochs)
@@ -175,11 +200,14 @@ def main():
     model, optimizer, dl, scheduler = accelerator.prepare(model, optimizer, dl, scheduler)
 
     for epoch in range(args.epochs):
+        # print("EPOCH:", epoch)
         for step, batch in enumerate(dl):
             with accelerator.accumulate(model):
                 # Encode query & pos
-                q_out = model(**batch["q"])
-                p_out = model(**batch["p_pos"])
+                q_out = forward_model(model, batch["q"])
+                p_out = forward_model(model, batch["p_pos"])
+                if batch["p_neg"] is not None:
+                    n_out = forward_model(model, batch["p_neg"])
                 q_emb = mean_pooling(q_out.last_hidden_state, batch["q"]["attention_mask"])
                 p_pos_emb = mean_pooling(p_out.last_hidden_state, batch["p_pos"]["attention_mask"])
 
@@ -187,11 +215,10 @@ def main():
                 q_emb = F.normalize(q_emb, p=2, dim=1)
                 p_pos_emb = F.normalize(p_pos_emb, p=2, dim=1)
 
-                loss = info_nce_loss(accelerator, q_emb, p_pos_emb)
+                loss = info_nce_loss(accelerator, q_emb, p_pos_emb, temperature=0.05)
 
-                # Optional triplet if negatives exist in batch
                 if include_triplets and batch["p_neg"] is not None:
-                    n_out = model(**batch["p_neg"])
+                    n_out = forward_model(model, batch["p_neg"])
                     n_emb = mean_pooling(n_out.last_hidden_state, batch["p_neg"]["attention_mask"])
                     n_emb = F.normalize(n_emb, p=2, dim=1)
                     loss = loss + triplet_loss(q_emb, p_pos_emb, n_emb, margin=args.margin)
