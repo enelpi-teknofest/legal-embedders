@@ -7,6 +7,7 @@ ds_name = "fikriokan/sonbahcem-tblg-batch-1"
 ds_name = "fikriokan/sonbahcem-krm-batch-1"
 ds_name = "fikriokan/sonbahcem-tuz-batch-final"
 ds_name = "fikriokan/bloglar"
+ds_name = "fikriokan/dnsy-1"
 
 ds = load_dataset(ds_name)
 cfgs = list(ds.keys())
@@ -31,7 +32,7 @@ Kurallar:
 Şimdi metni vereceğim:
 """
 
-doc = ds[cfgs[0]]['content'][4]
+doc = ds[cfgs[0]]['text'][4]
 
 completion = client.chat.completions.create(
     model="google/gemma-3-27b-it",

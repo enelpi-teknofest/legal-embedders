@@ -5,6 +5,7 @@ from transformers import AutoTokenizer
 import json
 import yaml
 import argparse
+import re
 
 with open("prompts.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
@@ -83,6 +84,7 @@ if __name__ == "__main__":
         out = [o.outputs[0].text for o in out]
 
         # Parse outputs
+        """
         parsed_outputs = []
         failed_parsing = 0
         for output in out:
@@ -97,14 +99,38 @@ if __name__ == "__main__":
                 failed_parsing += 1
                 parsed_outputs.append(None)
                 print("[DEBUG] Failed To Parse: ", output)
-
         print(f"Failed to parse {failed_parsing} out of {len(out)} outputs")
+        """
+
+
+        codeblock_pattern = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+        parsed_outputs = []
+        failed_parsing = 0
+
+        for output in out:
+            try:
+                # Try to extract the first code block
+                match = codeblock_pattern.search(output.strip())
+                if match:
+                    output = match.group(1)  # Extract just the JSON part
+
+                parsed_json = json.loads(output)
+                parsed_outputs.append(parsed_json)
+
+            except json.JSONDecodeError:
+                failed_parsing += 1
+                parsed_outputs.append(None)
+                print("[DEBUG] Failed To Parse:", output)
 
         # Map parsed questions back to the dataset using valid_indices
         questions = [None] * len(texts)
         for i, idx in enumerate(valid_indices):
             parsed = parsed_outputs[i]
-            questions[idx] = parsed['genel_soru'] if parsed else None
+            try:
+                questions[idx] = parsed['genel_soru'] if parsed else None
+            except:
+                questions[idx] = None
 
         # Filter the dataset to rows that had valid prompts (and thus valid output space)
         # Filter dataset first
