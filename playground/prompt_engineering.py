@@ -18,18 +18,25 @@ client = OpenAI(
 )
 
 prompt = """
-Aşağıda sana bir hukuki metin vereceğim. Bu metin bir kanun, anayasa maddesi ya da Yargıtay kararına ait olabilir. 
-Görevin, bu metni dikkatle analiz edip, içeriğiyle bağlantılı ama doğrudan atıf yapmayan, günlük bir insanın sorabileceği şekilde 
-doğal ve genel bir hukuk sorusu oluşturmaktır.
+Aşağıdaki metinden varlıkları (entities) ve aralarındaki ilişkileri çıkar.
+JSON formatında döndür:
 
-Kurallar:
-- Soru, verilen metinden türetilmiş bir temaya dayansın ama metindeki cümleleri doğrudan içermesin.
-- Soru, genel hukuk bilgisini sorgulayan bir tarzda olsun.
-- Soru, üniversite öğrencisi ya da hukuka ilgi duymayan biri tarafından sorulabilecek doğallıkta olsun.
-- 1 veya 2 cümleden oluşabilir soru.
-- Json formatında olup şöyle olması lazım: {\"genel_soru\":}
+{{
+    "entities": [
+        {{"name": "varlık_adı", "type": "kişi/yer/organizasyon/kavram/olay", "description": "kısa açıklama"}},
+    ],
+    "relationships": [
+        {{"from": "varlık1", "to": "varlık2", "relation": "ilişki_türü", "description": "ilişki açıklaması"}}
+    ]
+}}
 
-Şimdi metni vereceğim:
+KURALLAR:
+- Sadece önemli ve anlamlı varlıkları çıkar (maksimum 5 entity)
+- Belirsiz veya genel terimler kullanma
+- İlişkiler net ve anlamlı olmalı
+- Türkçe karakter kullan
+
+Metin: {}
 """
 
 doc = ds[cfgs[0]]['text'][4]
@@ -39,7 +46,7 @@ completion = client.chat.completions.create(
     messages=[
         {
             "role": "user",
-            "content": prompt + doc
+            "content": prompt.format(doc)
         }
     ],
 )

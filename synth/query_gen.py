@@ -62,18 +62,33 @@ if __name__ == "__main__":
     parser.add_argument("--ds_name", type=str, default="fikriokan/ygty", help="Dataset name or path.")
     parser.add_argument("--out_ds_name", type=str, default="ygty_post1", help="Output Dataset name or path.")
     parser.add_argument("--split", type=str, default=None, help="Output Dataset name or path.")
+    parser.add_argument("--col_name", type=str, default='genel_soru', help="Output Column Name.")
 
     args = parser.parse_args()
     sys = config[args.prompt]
 
     # Load dataset and configs
     ds = load_dataset(args.ds_name)
-    cfgs = list(ds.keys())[args.start:args.end]
+    cfgs = set(list(ds.keys())[args.start:args.end])
+
+    try:
+        ds_out = load_dataset(args.out_ds_name)
+        cfgs_out = set(ds_out.keys())
+        cfgs = list(cfgs - cfgs_out)
+    except:
+        print("[INFO] Output Dataset Doesn't Exist.")
+    
+    if len(cfgs) <= 0:
+        print("[INFO] No Configs To Process.")
+        exit(0)
+
+
+    print("[INFO] Processing Configs:", "\t".join(cfgs))
     print("[INFO] Processing Configs:", "\t".join(cfgs))
 
     for i, cfg in enumerate(cfgs):
         print('[INFO] Current Idx:', args.start + i)
-        ds_cur = ds[cfg]#.select(range(100))
+        ds_cur = ds[cfg]# .select(range(100)) # Debugging Purposes
         texts = ds_cur['text']
 
         # Process prompts and get indices of valid ones
@@ -82,26 +97,6 @@ if __name__ == "__main__":
         # Only run LLM on valid prompts
         out = llm.generate(prompts, sampling_params)
         out = [o.outputs[0].text for o in out]
-
-        # Parse outputs
-        """
-        parsed_outputs = []
-        failed_parsing = 0
-        for output in out:
-            try:
-                if output.strip().startswith('```json') and output.strip().endswith('```'):
-                    output = output.strip()[7:-3].strip()
-                elif output.strip().startswith('```') and output.strip().endswith('```'):
-                    output = output.strip()[3:-3].strip()
-                parsed_json = json.loads(output)
-                parsed_outputs.append(parsed_json)
-            except json.JSONDecodeError:
-                failed_parsing += 1
-                parsed_outputs.append(None)
-                print("[DEBUG] Failed To Parse: ", output)
-        print(f"Failed to parse {failed_parsing} out of {len(out)} outputs")
-        """
-
 
         codeblock_pattern = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
@@ -128,19 +123,22 @@ if __name__ == "__main__":
         for i, idx in enumerate(valid_indices):
             parsed = parsed_outputs[i]
             try:
-                questions[idx] = parsed['genel_soru'] if parsed else None
+                questions[idx] = parsed[args.col_name] if parsed else None
             except:
                 questions[idx] = None
 
         # Filter the dataset to rows that had valid prompts (and thus valid output space)
         # Filter dataset first
+        print("[DEBUG]  Parsed Output:", parsed_outputs[0])
         ds_cur = ds_cur.select(valid_indices)
 
         # Map directly to selected dataset
         questions = []
         for output in parsed_outputs:
-            if output and "genel_soru" in output:
-                questions.append(output["genel_soru"])
+            if output and args.col_name in output:
+                questions.append(output[args.col_name])
+            elif output:
+                questions.append(output)
             else:
                 questions.append(None)
 
@@ -148,11 +146,12 @@ if __name__ == "__main__":
         assert len(questions) == len(ds_cur), "Mismatch between questions and dataset rows"
 
         # Add column
-        ds_cur = ds_cur.add_column("genel_soru", questions)
+        ds_cur = ds_cur.add_column(args.col_name, questions)
+        print("[DEBUG] Output Dataset 1st Element:", ds_cur[0][args.col_name])
 
         # Get all column names except 'genel_soru' (which we're adding)
         original_columns = {col: ds_cur[col] for col in ds_cur.column_names}
-        original_columns["genel_soru"] = ds_cur['genel_soru']
+        original_columns[args.col_name] = ds_cur[args.col_name]
         
         ds_cur = Dataset.from_dict(original_columns)
 

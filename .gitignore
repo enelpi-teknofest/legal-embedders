@@ -210,5 +210,6 @@ __marimo__/
 *.log
 *.log2
 .vscode
-:
-out_dbg/
+*.swp
+out_dbg*
+*.index

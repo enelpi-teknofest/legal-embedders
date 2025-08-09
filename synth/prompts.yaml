@@ -19,3 +19,24 @@ mev_kanun_prompt: >
   - Json formatında olup şöyle olması lazım: {\"genel_soru\":}
 
   Şimdi metni vereceğim:
+
+graph_gen: >
+  Aşağıdaki metinden varlıkları (entities) ve aralarındaki ilişkileri çıkar.
+  JSON formatında döndür:
+
+  {{
+      "entities": [
+          {{"name": "varlık_adı", "type": "kişi/yer/organizasyon/kavram/olay", "description": "kısa açıklama"}},
+      ],
+      "relationships": [
+          {{"from": "varlık1", "to": "varlık2", "relation": "ilişki_türü", "description": "ilişki açıklaması"}}
+      ]
+  }}
+
+  KURALLAR:
+  - Sadece önemli ve anlamlı varlıkları çıkar (maksimum 5 entity)
+  - Belirsiz veya genel terimler kullanma
+  - İlişkiler net ve anlamlı olmalı
+  - Türkçe karakter kullan
+
+  Metin: 

@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from datasets import load_dataset
+from datasets import load_dataset, get_dataset_config_names, concatenate_datasets
 from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 from accelerate import Accelerator
 
@@ -178,7 +178,13 @@ def main():
     elif ext in {"json", "jsonl"}:
         ds = load_dataset("json", data_files=args.data_path, split="train")
     else:
-        ds = load_dataset(args.data_path, split="train")
+        cfgs = get_dataset_config_names(args.data_path)
+        print("Length Of Configs To Load:", len(cfgs))
+        datasets = []
+        for cfg in cfgs:
+            datasets.append(load_dataset(args.data_path, cfg)['train'])
+            print("Loading:", cfg)
+        ds = concatenate_datasets(datasets)
 
     rows = [r for r in ds if r.get("q") and r.get("pos_text")]
     random.shuffle(rows)
@@ -231,11 +237,11 @@ def main():
             if accelerator.is_main_process and step % 50 == 0:
                 print(f"Epoch {epoch} Step {step} Loss {loss.item():.4f}")
 
-        if accelerator.is_main_process:
-            # Save checkpoint per epoch
-            unwrapped = accelerator.unwrap_model(model)
-            unwrapped.save_pretrained(args.output_dir)
-            tokenizer.save_pretrained(args.output_dir)
+            if accelerator.is_main_process:
+                # Save checkpoint per epoch
+                unwrapped = accelerator.unwrap_model(model)
+                unwrapped.save_pretrained(args.output_dir + f"_epoch_{epoch}")
+                tokenizer.save_pretrained(args.output_dir + f"_epoch_{epoch}")
 
     if accelerator.is_main_process:
         print("✅ Training complete. Saved to:", args.output_dir)
